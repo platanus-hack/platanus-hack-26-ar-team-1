@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Cohort Dashboard - Adherencia y Multimedia",
-  description: "Dashboard para seguimiento de pacientes, adherencia al tratamiento y análisis multimedia con IA",
+  description: "Dashboard para seguimiento de pacientes, adherencia al tratamiento y analisis multimedia con IA",
 };
 
 export default function RootLayout({
