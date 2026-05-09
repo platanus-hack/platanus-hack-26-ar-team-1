@@ -1,0 +1,6 @@
+anthropic
+apscheduler
+flask
+gunicorn
+requests
+supabase
