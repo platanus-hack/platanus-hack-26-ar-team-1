@@ -28,7 +28,7 @@ def update_patient_status(patient_id, status):
     _db().table("patients").update({"status": status}).eq("id", patient_id).execute()
 
 
-def save_message(patient_id, direction, msg_type, content, media_url, media_type, wa_msg_id, image_analysis=None):
+def save_message(patient_id, direction, msg_type, content, media_url, media_type, wa_msg_id, analysis=None, bot_response=None):
     row = {
         "patient_id": patient_id,
         "direction": direction,
@@ -37,11 +37,11 @@ def save_message(patient_id, direction, msg_type, content, media_url, media_type
         "media_url": media_url,
         "media_type": media_type,
         "whatsapp_message_id": wa_msg_id,
-        "created_at": _now(),
     }
-    if image_analysis:
-        row["image_analysis"] = image_analysis
-    row.pop("created_at", None)  # let DB DEFAULT NOW() handle it (ensures proper TIMESTAMPTZ)
+    if analysis is not None:
+        row["analysis"] = analysis
+    if bot_response is not None:
+        row["bot_response"] = bot_response
     _db().table("conversations").insert(row).execute()
 
 

@@ -1,180 +1,155 @@
-# MCD — Action Plan (Hackathon Day 2)
+# MCD — Action Plan (Current State)
 
-## Current state
+## What's Done
 
-- [x] Full Flask app scaffolded (`mcd/`) — webhook, questionnaire flow, proactive check, DB layer, storage
-- [x] DB schema written (`mcd/db/schema.sql`)
-- [x] Supabase project exists (`jrjakjwwliwsktmostby`)
-- [x] Supabase MCP connected (new session needed to activate tools)
-- [ ] `.env` filled with real credentials (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY + ANTHROPIC_API_KEY missing)
-- [ ] Schema run in Supabase
-- [ ] Storage bucket created
-- [ ] Railway deployed
-- [x] Kapso webhook configured (`whatsapp.message.received` → Railway URL, secret set)
-
----
-
-## Time budget
-
-| Block | Time | Goal |
+| Component | Status | Notes |
 |---|---|---|
-| Morning | 09:00–12:00 | Bot live on real WhatsApp end-to-end |
-| Midday | 12:00–15:00 | CRO processing endpoint + lab report |
-| Afternoon | 15:00–18:00 | Doctor dashboard |
-| Evening | 18:00–EOD | Polish, full flow test, demo prep |
+| WhatsApp bot (Flask + Waitress) | ✅ Done | Railway deployed, Kapso v2 webhook, HMAC validation |
+| Kapso webhook | ✅ Done | `5f30448b`, v2 payload, currently → ngrok (local dev) |
+| Kapso v2 payload parsing | ✅ Done | `parse_body()` handles Kapso envelope format |
+| Media download + upload | ✅ Done | Kapso `download_url`, Supabase Storage `media` bucket |
+| Image Agent | ✅ Done | Claude Vision, Ozempic visual knowledge, structured tool output |
+| Symptom Agent | ✅ Done | Ozempic clinical KB, symptom classification, alert levels, multimedia triggers, critical fast path |
+| Knowledge base | ✅ Done | `ozempic_knowledge.py` — symptoms, image signals, alert keywords |
+| DB schema + migrations | ✅ Done | All tables + analysis JSONB, symptom_notes, adherence_signal, clinical_flags |
+| Supabase Storage | ✅ Done | `media` bucket (public) |
+| Admin endpoints | ✅ Done | POST /admin/patient, GET /admin/patients |
+| Proactive checker | ✅ Done | Flags non_responsive after 48h |
+| Doctor CRUD app | ✅ Done | External app (separate team) |
+| Lovable reports dashboard | ✅ Done | External app (separate team) — consumes `/report/generate` |
 
 ---
 
-## Phase 0 — Infrastructure (first 30 min)
+## What's Missing: CRO Agent
 
-Do these in parallel:
+The only remaining piece. This is the endpoint the Lovable dashboard calls to generate lab reports.
 
-### 1. Fill `.env`
-Open `mcd/.env` and fill in all values:
-```
-WHATSAPP_TOKEN=          # Meta Graph API token — from Kapso dashboard
-WHATSAPP_PHONE=          # Phone number ID — kapso whatsapp numbers list --output json
-WHATSAPP_WEBHOOK_SECRET= # Any string you choose — used as webhook verify token too
-SUPABASE_URL=            https://jrjakjwwliwsktmostby.supabase.co
-SUPABASE_SERVICE_ROLE_KEY= # Supabase → Settings → API → service_role key
-ANTHROPIC_API_KEY=       # your key
-ENVIRONMENT=prod
-```
+### What it does
 
-### 2. Run DB schema (via Supabase MCP in new session, or manually)
-Supabase dashboard → SQL Editor → paste and run `mcd/db/schema.sql`.
-Creates: `doctors`, `patients`, `conversations`, `questionnaire_responses`, `lab_reports`.
-
-### 3. Create Storage bucket
-Supabase → Storage → New bucket → name: `media` → toggle **Public** → Create.
-
-### 4. Deploy to Railway
-```bash
-cd platanus-hack-26-ar-team-1/mcd
-railway login
-railway init          # new project, name: mcd
-railway up
-```
-Then in Railway dashboard → Variables → paste all 7 env vars.
-
-### 5. Configure Kapso webhook
-Set webhook URL to: `https://<railway-url>/webhook`
-Verify token = the value you set for `WHATSAPP_WEBHOOK_SECRET`.
-
-**Checkpoint:** `GET https://<railway-url>/health` returns `ok`. Kapso webhook verified green.
-
----
-
-## Phase 1 — Smoke test end-to-end (09:00–12:00)
-
-### Seed a test patient
-```bash
-curl -X POST https://<railway-url>/admin/patient \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Paciente Test","phone_number":"5491112345678","drug_name":"Metformina"}'
-```
-Use a real phone number you have access to.
-
-### Test the flow
-1. Send "Hola" from that phone to the WhatsApp number
-2. Bot should reply with intro + first question
-3. Go through all 5 questions
-4. Verify `status = completed` via `GET https://<railway-url>/admin/patients`
-5. Send a photo during the questionnaire → verify it appears in Supabase Storage
-
-### Test non-responsive flagging
-Insert a patient with `created_at` backdated 49+ hours in Supabase SQL editor:
-```sql
-INSERT INTO patients (name, phone_number, drug_name, created_at)
-VALUES ('Non Responsive', '5490000000001', 'Ibuprofeno', NOW() - INTERVAL '50 hours');
-```
-Wait for the hourly proactive check (or restart Railway to trigger it at startup — or call `run_proactive_check()` directly).
-
-**Checkpoint:** Full questionnaire works on real WhatsApp. Status transitions correct. Non-responsive logic fires.
-
----
-
-## Phase 2 — CRO Processing Endpoint (12:00–15:00)
-
-Add a `/report/generate` endpoint to `app.py` that:
-1. Takes `drug_name` (and optionally `doctor_id`) in the request body
-2. Reads all `questionnaire_responses` for completed patients on that drug
-3. Sends cohort data to Claude with a structured output prompt
-4. Saves result to `lab_reports` table
+1. Receives `POST /report/generate` with `{ "drug_name": "Ozempic", "doctor_id": "..." }`
+2. Queries all `completed` patients for that drug with their full data
+3. Calls Claude with cohort data → structured report
+4. Saves to `lab_reports` table
 5. Returns the report JSON
 
-### Report JSON shape
+### Report JSON shape (align with Lovable dashboard team)
+
 ```json
 {
-  "adherence_rate": 0.75,
-  "key_findings": ["75% tomaron el medicamento correctamente", "30% reportó náuseas leves"],
-  "side_effects_mentioned": ["náuseas", "mareos"],
+  "drug_name": "Ozempic",
+  "generated_at": "2026-05-09T...",
+  "cohort": {
+    "total": 12,
+    "completed": 9,
+    "non_responsive": 2,
+    "in_progress": 1,
+    "adherence_rate": 0.78
+  },
+  "top_symptoms": [
+    { "symptom": "Náuseas", "count": 6, "category": "esperado_ozempic", "avg_severity": "leve" }
+  ],
+  "alert_summary": {
+    "urgente": 0,
+    "alta": 1,
+    "moderada": 3,
+    "baja": 5
+  },
+  "image_findings": {
+    "ozempic_face_detected": 2,
+    "injection_reactions": 1
+  },
   "patients": [
     {
       "patient_id": "...",
       "name": "...",
       "status": "completed",
-      "adherence_signal": "high|medium|low",
-      "summary": "Tomó el medicamento todos los días, reportó náuseas leves.",
-      "flags": []
+      "adherence_signal": "high",
+      "overall_alert_level": "baja",
+      "symptoms": ["Náuseas leves", "Caída de cabello moderada"],
+      "confounding_factors": [],
+      "clinical_summary": "..."
     }
   ],
-  "non_responsive_patients": ["nombre1", "nombre2"],
-  "recommended_actions": ["Seguimiento con pacientes que reportaron efectos secundarios"]
+  "recommendations": [
+    "Seguimiento con 3 pacientes que reportaron síntomas GI moderados",
+    "Evaluar ajuste de dosis en paciente con alerta alta"
+  ],
+  "non_responsive_patients": ["Nombre Apellido", "..."]
 }
 ```
 
-**Checkpoint:** `POST /report/generate` with `{"drug_name":"Metformina"}` returns valid JSON report.
+---
+
+## Action Plan: CRO Agent
+
+### Step 1 — Create `agents/cro_agent.py`
+
+```python
+# Input: list of patients with their questionnaire_responses + conversations.analysis
+# Output: structured cohort report dict (matches JSON shape above)
+# Tool: generate_cohort_report with all fields required
+```
+
+Key decisions:
+- Use `tool_choice: any` with a single `generate_cohort_report` tool for guaranteed structured output
+- Pass all patient data as context (conversation.analysis JSONB has the rich structured data)
+- Include Ozempic knowledge context so Claude can correctly categorize and prioritize
+
+### Step 2 — Add DB query to `database/supabase.py`
+
+```python
+def get_completed_patients_with_responses(drug_name, doctor_id=None):
+    # Joins patients + questionnaire_responses + conversations (analysis JSONB)
+    # Returns everything the CRO agent needs in one call
+```
+
+### Step 3 — Add `/report/generate` endpoint to `app.py`
+
+```python
+@app.route("/report/generate", methods=["POST"])
+def generate_report():
+    drug_name = request.json.get("drug_name")
+    doctor_id = request.json.get("doctor_id")
+    # call CRO agent → save to lab_reports → return JSON
+```
+
+### Step 4 — Deploy to Railway
+
+- `railway up --detach` from `mcd/`
+- Update Kapso webhook back to Railway URL: `kapso whatsapp webhooks update 5f30448b-dde5-4fc1-9271-6cdffc74b65e --phone-number-id 1086169867919187 --url https://platanus-hack-26-ar-team-1-production.up.railway.app/webhook`
 
 ---
 
-## Phase 3 — Doctor Dashboard (15:00–18:00)
+## Before Demo: Seed Data
 
-Single-file `dashboard/index.html` with Supabase JS via CDN. No framework, no build step.
+Need realistic data to show in the dashboard. Use the admin API or SQL:
 
-**What it shows:**
-- Patient list with green (completed) / red (non_responsive) / yellow (in_progress) / gray (pending) badges
-- Drug name and created date per patient
-- "Add patient" form (name, phone, drug)
-- "Generate report" button → calls `/report/generate` → shows report inline
-
-**Deploy:** Vercel (`vercel --prod` from `dashboard/`) — 2 minutes.
-
----
-
-## Phase 4 — Polish + Demo Prep (18:00–EOD)
-
-- [ ] Run full flow end-to-end: add patient → bot contacts → questionnaire → report generated
-- [ ] Seed 3-4 patients with varied statuses for visual impact in dashboard
-- [ ] Screenshot or record the WhatsApp conversation as backup for live demo
-- [ ] Prepare 2-minute demo script:
-  1. Show dashboard (patients list, status colors)
-  2. Add a new patient live
-  3. Open WhatsApp — bot message already waiting
-  4. Go through 2-3 questions live
-  5. Hit "Generate report" → show cohort analysis
-  6. "This replaces a CRO that takes 3 months and costs $200K"
+```sql
+-- Add test patients in various states
+INSERT INTO patients (name, phone_number, drug_name, status, adherence_overall, clinical_summary)
+VALUES 
+  ('Ana García', '5491123456789', 'Ozempic', 'completed', 'high', 'Buena adherencia. Náuseas leves en primeras semanas.'),
+  ('Carlos López', '5491198765432', 'Ozempic', 'completed', 'medium', 'Olvidó 2 dosis. Reportó cansancio y caída de cabello.'),
+  ('Laura Martínez', '5491111222333', 'Ozempic', 'non_responsive', null, null),
+  ('Pedro Rodríguez', '5491144455566', 'Ozempic', 'in_progress', null, null);
+```
 
 ---
 
-## Team split
+## Demo Script (2 min)
 
-| Who | Focus |
-|---|---|
-| Martín | Railway deploy, Kapso config, Phase 2 processing endpoint |
-| Delfina | Phase 3 dashboard (HTML + Supabase JS) |
-| Candela | Finalize questionnaire questions in `mcd/config/settings.py`, test as "patient", define report JSON shape |
+1. Open Lovable dashboard → show patients list (green/red/yellow/gray)
+2. Show a completed patient → expand symptoms and image analysis
+3. Click "Generate Report" → show cohort analysis (adherence rate, top side effects)
+4. Optional live: add new patient → send WhatsApp "Hola" → watch bot respond
+5. Pitch: "This replaces a CRO that takes 3 months and costs $200K"
 
 ---
 
-## Watch-outs
+## Known Issues / Watch-outs
 
-1. **WhatsApp 24h window** — patients must message the bot first. Proactive outbound texts without a prior message require Meta-approved templates (takes 24-48h). For the demo: have someone send "Hola" to open the window, then the bot conducts the questionnaire freely.
-
-2. **Railway cold starts** — first request after inactivity may be slow. `/health` ping keeps it warm.
-
-3. **Phone number format** — DB stores without `+`. WhatsApp webhook sends without `+`. Both sides normalized already.
-
-4. **Supabase MCP** — restart Claude Code session after adding the MCP entry so the tools are loaded. Then you can run SQL and insert seed data directly from the conversation.
-
-5. **Demo data** — seed at least one `non_responsive` patient manually before the demo for visual contrast.
+1. **Kapso webhook URL** — currently pointing at ngrok (local dev). Must update to Railway URL before demo: run the `kapso whatsapp webhooks update` command above.
+2. **`conversations.image_analysis` column** — added but `save_message` doesn't write to it anymore (image_analysis now lives inside `conversations.analysis` JSONB). No action needed unless separate column matters.
+3. **`drug_name` missing from patients info_schema query** — column IS in DB (inserts work), likely an ordinal listing gap in the query. Verified working.
+4. **RAW BODY log** — `app.py` still logs the full raw body on every request. Remove before demo or it's noisy.
+5. **`MIN_QUESTIONS_TO_COMPLETE = 3`** — can lower to 1-2 for demo speed if needed.
