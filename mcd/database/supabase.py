@@ -21,18 +21,15 @@ def get_patient_by_phone(phone_number):
         .maybe_single()
         .execute()
     )
-    return result.data
+    return result.data if result else None
 
 
 def update_patient_status(patient_id, status):
-    update = {"status": status}
-    if status == "completed":
-        update["completed_at"] = _now()
-    _db().table("patients").update(update).eq("id", patient_id).execute()
+    _db().table("patients").update({"status": status}).eq("id", patient_id).execute()
 
 
-def save_message(patient_id, direction, msg_type, content, media_url, media_type, wa_msg_id):
-    _db().table("conversations").insert({
+def save_message(patient_id, direction, msg_type, content, media_url, media_type, wa_msg_id, image_analysis=None):
+    row = {
         "patient_id": patient_id,
         "direction": direction,
         "message_type": msg_type,
@@ -41,7 +38,11 @@ def save_message(patient_id, direction, msg_type, content, media_url, media_type
         "media_type": media_type,
         "whatsapp_message_id": wa_msg_id,
         "created_at": _now(),
-    }).execute()
+    }
+    if image_analysis:
+        row["image_analysis"] = image_analysis
+    row.pop("created_at", None)  # let DB DEFAULT NOW() handle it (ensures proper TIMESTAMPTZ)
+    _db().table("conversations").insert(row).execute()
 
 
 def get_conversation_history(patient_id, limit=20):
@@ -56,21 +57,40 @@ def get_conversation_history(patient_id, limit=20):
     return result.data or []
 
 
-def save_questionnaire_response(patient_id, question_number, answer_text, media_url=None):
-    from config.settings import QUESTIONNAIRE_QUESTIONS
-    question_text = (
-        QUESTIONNAIRE_QUESTIONS[question_number - 1]
-        if 0 < question_number <= len(QUESTIONNAIRE_QUESTIONS)
-        else ""
+def get_question_count(patient_id):
+    result = (
+        _db().table("questionnaire_responses")
+        .select("id", count="exact")
+        .eq("patient_id", patient_id)
+        .execute()
     )
-    _db().table("questionnaire_responses").insert({
+    return result.count or 0
+
+
+def save_questionnaire_response(patient_id, question_number, answer_text, media_url=None, symptom_notes=None, adherence_signal=None):
+    row = {
         "patient_id": patient_id,
         "question_number": question_number,
-        "question_text": question_text,
+        "question_text": "",
         "answer_text": answer_text,
         "media_url": media_url,
-        "created_at": _now(),
-    }).execute()
+    }
+    if symptom_notes:
+        row["symptom_notes"] = symptom_notes
+    if adherence_signal:
+        row["adherence_signal"] = adherence_signal
+    _db().table("questionnaire_responses").insert(row).execute()
+
+
+def complete_patient(patient_id, overall_adherence, clinical_summary, clinical_flags):
+    import json
+    _db().table("patients").update({
+        "status": "completed",
+        "completed_at": _now(),
+        "adherence_overall": overall_adherence,
+        "clinical_summary": clinical_summary,
+        "clinical_flags": json.dumps(clinical_flags),
+    }).eq("id", patient_id).execute()
 
 
 def get_patients_by_drug(drug_name):

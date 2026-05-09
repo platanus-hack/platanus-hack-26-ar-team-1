@@ -14,7 +14,7 @@ def handle_media_upload(media_id, patient_id):
         if not file_info:
             return None, None
 
-        download_url = file_info.get("url")
+        download_url = file_info.get("download_url") or file_info.get("url")
         mime_type = file_info.get("mime_type", "application/octet-stream")
 
         content = download(download_url)

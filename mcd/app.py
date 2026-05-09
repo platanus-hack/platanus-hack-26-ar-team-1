@@ -1,9 +1,7 @@
 import os, hmac, hashlib, threading, json
 from flask import Flask, request, jsonify
-from apscheduler.schedulers.background import BackgroundScheduler
 from config.envvars import WHATSAPP_WEBHOOK_SECRET
 from core import parse_body, handle_message
-from proactive import run_proactive_check
 
 app = Flask(__name__)
 
@@ -24,7 +22,7 @@ def webhook_verify():
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    if not _valid_signature(request.data, request.headers.get("X-Hub-Signature-256", "")):
+    if not _valid_signature(request.data, request.headers.get("X-Webhook-Signature", "")):
         return "Unauthorized", 401
 
     body = request.get_json(silent=True) or {}
@@ -38,23 +36,25 @@ def webhook():
 
 def _process(body):
     try:
+        import json, sys
+        print("RAW BODY:", json.dumps(body, indent=2), flush=True)
         for message in parse_body(body):
             handle_message(message)
     except Exception as e:
         import traceback
-        print("Processing error:", e)
-        print(traceback.format_exc())
+        print("Processing error:", e, flush=True)
+        print(traceback.format_exc(), flush=True)
 
 
 def _valid_signature(payload: bytes, header: str) -> bool:
-    if not header.startswith("sha256="):
+    if not header:
         return False
     expected = hmac.new(
         WHATSAPP_WEBHOOK_SECRET.encode(),
         msg=payload,
         digestmod=hashlib.sha256,
     ).hexdigest()
-    return hmac.compare_digest(header[7:], expected)
+    return hmac.compare_digest(header, expected)
 
 
 # ── Admin endpoints (no dashboard yet — use curl for demo) ───────────────────
@@ -87,13 +87,6 @@ def admin_list_patients():
 @app.route("/health")
 def health():
     return "ok"
-
-
-# ── Proactive check — runs every hour via APScheduler ────────────────────────
-
-scheduler = BackgroundScheduler(daemon=True)
-scheduler.add_job(run_proactive_check, "interval", hours=1)
-scheduler.start()
 
 
 if __name__ == "__main__":

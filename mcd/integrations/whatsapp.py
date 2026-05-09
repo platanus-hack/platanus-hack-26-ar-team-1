@@ -2,18 +2,23 @@ import requests, time
 from config.envvars import WHATSAPP_TOKEN as TOKEN, WHATSAPP_PHONE as FROM_PHONE_NUMBER_ID
 from config.settings import DOWNLOAD_TIMEOUT
 
-BASE_URL = "https://graph.facebook.com/v21.0/"
+# Kapso proxy — all WhatsApp API calls go through here with X-API-Key auth
+KAPSO_BASE = "https://api.kapso.ai/meta/whatsapp/v24.0/"
+META_BASE = "https://graph.facebook.com/v21.0/"   # only used for media download
 TEXT_LENGTH_LIMIT = 4096
 
 
 def get_file(file_id, max_retries=3, backoff_factor=2):
-    url = BASE_URL + file_id
-    headers = {"Authorization": f"Bearer {TOKEN}"}
+    url = KAPSO_BASE + file_id
+    headers = {"X-API-Key": TOKEN}
+    params = {"phone_number_id": FROM_PHONE_NUMBER_ID}
     for attempt in range(1, max_retries + 1):
         try:
-            r = requests.get(url=url, headers=headers, timeout=DOWNLOAD_TIMEOUT)
+            r = requests.get(url=url, headers=headers, params=params, timeout=DOWNLOAD_TIMEOUT)
             if r.ok:
-                return r.json()
+                data = r.json()
+                print(f"[get_file] {data}")
+                return data
             print(f"[get_file attempt {attempt}] {r.status_code}: {r.text}")
         except requests.exceptions.RequestException as e:
             print(f"[get_file attempt {attempt}] {e}")
@@ -25,10 +30,10 @@ def get_file(file_id, max_retries=3, backoff_factor=2):
 def download(url, max_retries=3, backoff_factor=2):
     for attempt in range(1, max_retries + 1):
         try:
-            r = requests.get(url, headers={"Authorization": f"Bearer {TOKEN}"}, timeout=DOWNLOAD_TIMEOUT)
+            r = requests.get(url, headers={"X-API-Key": TOKEN}, timeout=DOWNLOAD_TIMEOUT)
             if r.ok:
                 return r.content
-            print(f"[download attempt {attempt}] {r.status_code}: {r.text}")
+            print(f"[download attempt {attempt}] {r.status_code}: {r.text[:200]}")
         except requests.exceptions.RequestException as e:
             print(f"[download attempt {attempt}] {e}")
         if attempt < max_retries:
@@ -37,7 +42,7 @@ def download(url, max_retries=3, backoff_factor=2):
 
 
 def _post(url, payload, label, max_retries=3, backoff_factor=2):
-    headers = {"Authorization": f"Bearer {TOKEN}"}
+    headers = {"X-API-Key": TOKEN}
     for attempt in range(1, max_retries + 1):
         try:
             r = requests.post(url, json=payload, headers=headers, timeout=DOWNLOAD_TIMEOUT)
@@ -51,7 +56,7 @@ def _post(url, payload, label, max_retries=3, backoff_factor=2):
 
 
 def send_message(text, phone_number, reply_id=None):
-    url = BASE_URL + FROM_PHONE_NUMBER_ID + "/messages"
+    url = KAPSO_BASE + FROM_PHONE_NUMBER_ID + "/messages"
     if len(text) <= TEXT_LENGTH_LIMIT:
         _send_text(url, str(text), str(phone_number), reply_id)
         return
@@ -73,7 +78,7 @@ def _send_text(url, text, phone, reply_id):
 
 
 def send_buttons(body_text, buttons, phone_number):
-    url = BASE_URL + FROM_PHONE_NUMBER_ID + "/messages"
+    url = KAPSO_BASE + FROM_PHONE_NUMBER_ID + "/messages"
     payload = {
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
@@ -90,7 +95,7 @@ def send_buttons(body_text, buttons, phone_number):
 
 def send_typing(phone_number, msg_id):
     try:
-        url = BASE_URL + FROM_PHONE_NUMBER_ID + "/messages"
+        url = KAPSO_BASE + FROM_PHONE_NUMBER_ID + "/messages"
         payload = {
             "messaging_product": "whatsapp",
             "status": "read",

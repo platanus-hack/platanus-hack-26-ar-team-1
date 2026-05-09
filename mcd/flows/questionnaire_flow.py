@@ -1,8 +1,9 @@
-import anthropic
-from config.envvars import ANTHROPIC_API_KEY
-from config.settings import QUESTIONNAIRE_QUESTIONS, MAX_CONVERSATION_HISTORY
+from agents.image_agent import analyze_image
+from agents.symptom_agent import analyze_and_next
 from database.supabase import (
+    complete_patient,
     get_conversation_history,
+    get_question_count,
     save_message,
     save_questionnaire_response,
     update_patient_status,
@@ -10,24 +11,7 @@ from database.supabase import (
 from utils.storage import handle_media_upload
 from integrations.whatsapp import send_message, send_typing
 
-SYSTEM_PROMPT = """Sos un asistente médico amable y empático que hace el seguimiento del tratamiento de un paciente.
-
-Paciente: {patient_name}
-Medicamento: {drug_name}
-
-Tu objetivo es cubrir estas 5 preguntas sobre el consumo del medicamento:
-{questions}
-
-Reglas:
-- Si es el primer mensaje del paciente, presentate brevemente antes de la primera pregunta
-- Sé empático, claro y conciso — el paciente está en WhatsApp, no en un formulario
-- Si el paciente envía una imagen, audio u otro archivo, acusá recibo y consideralo en tu respuesta
-- Podés hacer una breve pregunta de seguimiento si la respuesta es incompleta o poco clara
-- No hagas más de una pregunta por mensaje
-- Adaptá el tono y el lenguaje según las respuestas del paciente
-- Respondé siempre en el mismo idioma que usa el paciente
-- Cuando hayas cubierto las 5 preguntas principales, agradecé al paciente y despedite
-- Al finalizar las 5 preguntas, incluí exactamente la etiqueta [COMPLETED] al final de tu último mensaje (el paciente no la verá)"""
+MIN_QUESTIONS_TO_COMPLETE = 3
 
 
 def questionnaire_flow(record, patient):
@@ -37,14 +21,16 @@ def questionnaire_flow(record, patient):
 
     send_typing(phone, msg_id)
 
-    # Download media from WhatsApp → upload to Supabase Storage before URL expires
+    # --- Upload media before WhatsApp URL expires ---
     media_url, media_type = None, None
     media_id = _get_media_id(record)
     if media_id:
         media_url, media_type = handle_media_upload(media_id, patient_id)
 
     text_content = record.get("text", "")
+    image_analysis = None
 
+    # --- Save inbound message ---
     save_message(
         patient_id=patient_id,
         direction="inbound",
@@ -55,31 +41,53 @@ def questionnaire_flow(record, patient):
         wa_msg_id=msg_id,
     )
 
-    if patient["status"] in ("pending",):
+    if patient["status"] == "pending":
         update_patient_status(patient_id, "in_progress")
 
-    history = get_conversation_history(patient_id, limit=MAX_CONVERSATION_HISTORY)
-    messages = _build_llm_messages(history, text_content, media_url)
+    # --- Image agent: analyze if patient sent an image ---
+    if record["type"] == "image" and media_url:
+        try:
+            image_analysis = analyze_image(media_url, patient)
+            print(f"[image_agent] {image_analysis}")
+            _save_image_analysis_to_last_message(patient_id, msg_id, image_analysis)
+        except Exception as e:
+            print(f"[image_agent error] {e}")
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    questions_text = "\n".join([f"{i+1}. {q}" for i, q in enumerate(QUESTIONNAIRE_QUESTIONS)])
-    system = SYSTEM_PROMPT.format(
-        patient_name=patient["name"],
-        drug_name=patient["drug_name"],
-        questions=questions_text,
+    # --- Symptom agent: extract findings and generate next question ---
+    history = get_conversation_history(patient_id)
+    questions_so_far = get_question_count(patient_id)
+
+    result = analyze_and_next(
+        patient=patient,
+        conversation_history=history,
+        latest_message=text_content,
+        image_analysis=image_analysis,
+        questions_so_far=questions_so_far,
+    )
+    print(f"[symptom_agent] {result}")
+
+    # --- Persist this response ---
+    save_questionnaire_response(
+        patient_id=patient_id,
+        question_number=questions_so_far + 1,
+        answer_text=text_content or "[imagen]",
+        media_url=media_url,
+        symptom_notes=", ".join(result.get("symptoms_noted", [])) or None,
+        adherence_signal=result.get("adherence_signal"),
     )
 
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=600,
-        system=system,
-        messages=messages,
-    )
+    bot_reply = result["next_message"]
 
-    bot_reply_raw = response.content[0].text
-    completed = "[COMPLETED]" in bot_reply_raw
-    bot_reply = bot_reply_raw.replace("[COMPLETED]", "").strip()
+    # --- Complete only if minimum questions answered ---
+    if result.get("is_complete") and questions_so_far + 1 >= MIN_QUESTIONS_TO_COMPLETE:
+        complete_patient(
+            patient_id=patient_id,
+            overall_adherence=result.get("adherence_signal", "unclear"),
+            clinical_summary=", ".join(result.get("symptoms_noted", [])),
+            clinical_flags=[],
+        )
 
+    # --- Save outbound and reply ---
     save_message(
         patient_id=patient_id,
         direction="outbound",
@@ -89,20 +97,7 @@ def questionnaire_flow(record, patient):
         media_type=None,
         wa_msg_id=None,
     )
-
-    question_number = _current_question_number(history)
-    if text_content or media_url:
-        save_questionnaire_response(
-            patient_id=patient_id,
-            question_number=question_number,
-            answer_text=text_content,
-            media_url=media_url,
-        )
-
     send_message(bot_reply, phone)
-
-    if completed:
-        update_patient_status(patient_id, "completed")
 
 
 def _get_media_id(record):
@@ -113,29 +108,13 @@ def _get_media_id(record):
     return None
 
 
-def _current_question_number(history):
-    inbound_count = sum(1 for m in history if m["direction"] == "inbound")
-    return min(inbound_count + 1, len(QUESTIONNAIRE_QUESTIONS))
-
-
-def _build_llm_messages(history, current_text, media_url):
-    messages = []
-    for msg in history:
-        role = "assistant" if msg["direction"] == "outbound" else "user"
-        content = msg.get("content") or ""
-        if msg.get("media_url"):
-            content += f"\n[Archivo adjunto: {msg['media_url']}]"
-        if content.strip():
-            messages.append({"role": role, "content": content})
-
-    current_content = current_text or ""
-    if media_url:
-        current_content += f"\n[Archivo adjunto: {media_url}]"
-    if current_content.strip():
-        messages.append({"role": "user", "content": current_content})
-
-    # Claude requires conversation to start with 'user'
-    if not messages or messages[0]["role"] != "user":
-        messages = [{"role": "user", "content": "(inicio de conversación)"}] + messages
-
-    return messages
+def _save_image_analysis_to_last_message(patient_id, wa_msg_id, analysis):
+    from database.supabase import _db
+    try:
+        _db().table("conversations") \
+            .update({"image_analysis": analysis}) \
+            .eq("patient_id", patient_id) \
+            .eq("whatsapp_message_id", wa_msg_id) \
+            .execute()
+    except Exception as e:
+        print(f"[image_analysis save] {e}")
