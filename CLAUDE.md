@@ -33,12 +33,11 @@ MCD replaces CRO (Contract Research Organizations) for pharmaceutical labs. Labs
 
 ## Services & Deploy URLs
 
-| Service | Branch | URL | Notes |
-|---|---|---|---|
-| WhatsApp Bot | `main` | `https://platanus-hack-26-ar-team-1-production.up.railway.app` | Flask + Waitress, full AI agents |
-| WhatsApp Bot (demo) | `mcd-demo` | TBD (new Railway service) | Hardcoded dialog, no agents |
-| Doctor dashboard | `main` | `https://mcd-doctor-production.up.railway.app` | Next.js, patient CRUD |
-| Lab dashboard | — | `https://cohort-care-preview.lovable.app/` | Lovable, external team |
+| Service | URL | Notes |
+|---|---|---|
+| WhatsApp Bot | `https://platanus-hack-26-ar-team-1-production.up.railway.app` | Flask + Waitress, full AI agents |
+| Doctor dashboard | `https://mcd-doctor-production.up.railway.app` | Next.js, patient CRUD |
+| Lab dashboard | `https://cohort-care-preview.lovable.app/` | Lovable, external team |
 
 ---
 
@@ -77,7 +76,7 @@ MCD replaces CRO (Contract Research Organizations) for pharmaceutical labs. Labs
 3. 200 returned immediately; message processed in background thread
 4. `parse_body()` extracts message from Kapso v2 envelope
 5. Patient looked up by phone number
-6. `questionnaire_flow()` orchestrates agents (or `demo_flow()` on `mcd-demo` branch)
+6. `questionnaire_flow()` orchestrates agents
 
 **Multi-agent questionnaire pipeline (per message):**
 ```
@@ -105,23 +104,6 @@ inbound message
 - Aggregates all completed patients for a drug
 - Generates cohort report (adherence rate, side effects, alerts, per-patient summaries)
 - Saves to `lab_reports`, returns JSON for dashboard
-
-### Demo flow (`mcd-demo` branch)
-
-Hardcoded 6-step dialog for demos — no agents, no DB writes, in-memory state per phone:
-
-| Step | Trigger | Bot sends |
-|---|---|---|
-| 0 | Any message | Welcome + "¿ya iniciaste tu tratamiento?" |
-| 1 | Any message | "Buenísimo… mandame foto de tu rostro" |
-| 2 | Image | "Qué bueno saberlo…" → 5s → ⏰ "3 dias después…" → foto request |
-| 3 | Image | 3 confounding factor questions |
-| 4 | Any text | "Gracias!" → 5s → ⏰ "14 dias despues…" |
-| 5 | Image + text | "Lamento que te sientas así… Dr. Platanus" → loop to 0 |
-
-`RESTART` silently resets state to step 0 without sending any message.
-
----
 
 ## Patient State Machine
 
@@ -217,9 +199,8 @@ kapso whatsapp webhooks update 5f30448b-dde5-4fc1-9271-6cdffc74b65e --phone-numb
 ## Deployment
 
 - **Local dev**: `set -a && source .env && set +a && .venv/bin/python -m flask run --port 5000` + `ngrok http 5000`
-- **Production (main)**: `railway up --detach` from `mcd/`
-- **Production (demo)**: deploy `mcd-demo` branch as a separate Railway service, same root dir `mcd/`, same env vars
-- **Update Kapso webhook** after switching: run command above with the target service URL
+- **Production**: `railway up --detach` from `mcd/`
+- **Update Kapso webhook** after switching environments: run command above with the target service URL
 
 ---
 
@@ -238,8 +219,7 @@ platanus-hack-26-ar-team-1/
 │   │   └── knowledge/
 │   │       └── ozempic_knowledge.py   # Shared clinical knowledge base
 │   ├── flows/
-│   │   ├── questionnaire_flow.py      # Orchestrates image + symptom agents (main)
-│   │   └── demo_flow.py               # Hardcoded dialog, no agents (mcd-demo branch)
+│   │   └── questionnaire_flow.py      # Orchestrates image + symptom agents
 │   ├── database/
 │   │   └── supabase.py                # All DB operations
 │   ├── integrations/
