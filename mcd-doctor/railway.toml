@@ -2,6 +2,6 @@
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "npm run start -- -p ${PORT:-3000}"
-healthcheckPath = "/"
+startCommand = "npm run start"
+healthcheckPath = "/patients"
 healthcheckTimeout = 120
