@@ -31,7 +31,7 @@ def handle_media_upload(media_id, patient_id):
         )
 
         public_url = _db().storage.from_(BUCKET).get_public_url(path)
-        print(f"Uploaded media: {public_url}")
+        print(f"Uploaded media: mime_type={mime_type}")
         return public_url, mime_type
 
     except Exception as e:

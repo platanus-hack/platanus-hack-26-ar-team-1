@@ -40,7 +40,7 @@ def questionnaire_flow(record, patient):
     if record["type"] == "image" and media_url:
         try:
             image_analysis = analyze_image(media_url, patient)
-            print(f"[image_agent] {image_analysis}")
+            print("[image_agent] completed")
         except Exception as e:
             print(f"[image_agent error] {e}")
 
@@ -55,7 +55,12 @@ def questionnaire_flow(record, patient):
         image_analysis=image_analysis,
         questions_so_far=questions_so_far,
     )
-    print(f"[symptom_agent] {result}")
+    print(
+        "[symptom_agent] "
+        f"alert={result.get('overall_alert_level')} "
+        f"complete={result.get('is_complete')} "
+        f"symptoms={len(result.get('symptoms_noted', []))}"
+    )
 
     bot_reply = result["next_message"]
 

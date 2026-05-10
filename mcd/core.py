@@ -12,7 +12,7 @@ def handle_message(record):
     patient = get_patient_by_phone(phone)
 
     if patient is None:
-        print(f"Unknown phone: {phone} — sending test reply")
+        print("Unknown phone — sending test reply")
         send_message("👋 Bot recibió tu mensaje. Pedile a tu médico que te cargue en el sistema.", phone)
         return
 
