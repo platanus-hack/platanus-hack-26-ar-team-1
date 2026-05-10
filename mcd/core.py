@@ -1,6 +1,6 @@
 import uuid, time, json
 from database.supabase import get_patient_by_phone
-from flows.questionnaire_flow import questionnaire_flow
+from flows.demo_flow import demo_flow
 from integrations.whatsapp import send_message
 
 
@@ -16,11 +16,7 @@ def handle_message(record):
         send_message("👋 Bot recibió tu mensaje. Pedile a tu médico que te cargue en el sistema.", phone)
         return
 
-    if patient["status"] == "completed":
-        send_message("¡Ya completaste el cuestionario! Muchas gracias por tu tiempo. 🙏", phone)
-        return
-
-    questionnaire_flow(record, patient)
+    demo_flow(record, patient)
 
 
 def parse_body(body):
