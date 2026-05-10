@@ -17,18 +17,34 @@ MCD replaces CRO (Contract Research Organizations) for pharmaceutical labs. Labs
                     └──┬───────────────┬──────────────┘
                        │               │
           ┌────────────▼───┐   ┌───────▼──────────┐
-          │  Doctor app    │   │  WhatsApp Bot    │
-          │  (external)    │   │  ← THIS MODULE   │
+          │  mcd-doctor    │   │  WhatsApp Bot    │
+          │  (Next.js)     │   │  ← THIS MODULE   │
           │  CRUD patients │   │  multi-agent     │
           │  sees status   │   │  questionnaire   │
           └────────────────┘   └──────────────────┘
+                                        │
+                    ┌───────────────────▼─────────────┐
+                    │    mcd-dashboard (Lovable)       │
+                    │    Lab reports + cohort view     │
+                    └─────────────────────────────────┘
 ```
+
+---
+
+## Services & Deploy URLs
+
+| Service | Branch | URL | Notes |
+|---|---|---|---|
+| WhatsApp Bot | `main` | `https://platanus-hack-26-ar-team-1-production.up.railway.app` | Flask + Waitress, full AI agents |
+| WhatsApp Bot (demo) | `mcd-demo` | TBD (new Railway service) | Hardcoded dialog, no agents |
+| Doctor dashboard | `main` | `https://mcd-doctor-production.up.railway.app` | Next.js, patient CRUD |
+| Lab dashboard | — | `https://cohort-care-preview.lovable.app/` | Lovable, external team |
 
 ---
 
 ## What the Bot Does
 
-1. Doctor loads patient (name, phone, drug) via Doctor app → DB status = `pending`
+1. Doctor loads patient (name, phone, drug) via mcd-doctor → DB status = `pending`
 2. Patient messages the bot → questionnaire begins
 3. Bot conducts dynamic AI interview (symptom agent + image agent)
 4. Responses, symptoms, image analyses saved to Supabase
@@ -46,8 +62,8 @@ MCD replaces CRO (Contract Research Organizations) for pharmaceutical labs. Labs
 | Database | Supabase (PostgreSQL) |
 | Media storage | Supabase Storage (`media` bucket, public) |
 | LLM | Claude API — `claude-sonnet-4-6` |
-| Doctor app | External (separate team) |
-| Reports dashboard | Lovable (external, separate team) |
+| Doctor dashboard | Next.js on Railway (`mcd-doctor/`) |
+| Lab reports dashboard | Lovable React app (`mcd-dashboard/`) |
 
 ---
 
@@ -61,7 +77,7 @@ MCD replaces CRO (Contract Research Organizations) for pharmaceutical labs. Labs
 3. 200 returned immediately; message processed in background thread
 4. `parse_body()` extracts message from Kapso v2 envelope
 5. Patient looked up by phone number
-6. `questionnaire_flow()` orchestrates agents
+6. `questionnaire_flow()` orchestrates agents (or `demo_flow()` on `mcd-demo` branch)
 
 **Multi-agent questionnaire pipeline (per message):**
 ```
@@ -85,10 +101,25 @@ inbound message
 [send reply via Kapso]
 ```
 
-**CRO Agent** (`/report/generate`):
+**CRO Agent** (`/report/generate`) — TODO:
 - Aggregates all completed patients for a drug
 - Generates cohort report (adherence rate, side effects, alerts, per-patient summaries)
 - Saves to `lab_reports`, returns JSON for dashboard
+
+### Demo flow (`mcd-demo` branch)
+
+Hardcoded 6-step dialog for demos — no agents, no DB writes, in-memory state per phone:
+
+| Step | Trigger | Bot sends |
+|---|---|---|
+| 0 | Any message | Welcome + "¿ya iniciaste tu tratamiento?" |
+| 1 | Any message | "Buenísimo… mandame foto de tu rostro" |
+| 2 | Image | "Qué bueno saberlo…" → 5s → ⏰ "3 dias después…" → foto request |
+| 3 | Image | 3 confounding factor questions |
+| 4 | Any text | "Gracias!" → 5s → ⏰ "14 dias despues…" |
+| 5 | Image + text | "Lamento que te sientas así… Dr. Platanus" → loop to 0 |
+
+`RESTART` silently resets state to step 0 without sending any message.
 
 ---
 
@@ -164,6 +195,8 @@ ANTHROPIC_API_KEY=           # Claude API key
 ENVIRONMENT=                 # prod
 ```
 
+All env vars required on both `mcd` and `mcd-demo` Railway services.
+
 ---
 
 ## Kapso Setup (done)
@@ -172,45 +205,63 @@ ENVIRONMENT=                 # prod
 - Production number: **+1 201-701-6560** — `phone_number_id: 1086169867919187`
 - Webhook ID: `5f30448b-dde5-4fc1-9271-6cdffc74b65e`
   - Event: `whatsapp.message.received`, payload v2, active
-  - Currently pointed at ngrok for local dev — update to Railway URL for prod
+  - Points to whichever service is active (switch with command below)
+
+**Switch webhook between services:**
+```bash
+kapso whatsapp webhooks update 5f30448b-dde5-4fc1-9271-6cdffc74b65e --phone-number-id 1086169867919187 --url <url>/webhook
+```
 
 ---
 
 ## Deployment
 
 - **Local dev**: `set -a && source .env && set +a && .venv/bin/python -m flask run --port 5000` + `ngrok http 5000`
-- **Production**: `railway up --detach` from `mcd/` (Procfile: `waitress-serve --host=0.0.0.0 --port=$PORT --threads=4 app:app`)
-- **Update Kapso webhook** when switching between local and prod: `kapso whatsapp webhooks update 5f30448b-dde5-4fc1-9271-6cdffc74b65e --phone-number-id 1086169867919187 --url <url>/webhook`
+- **Production (main)**: `railway up --detach` from `mcd/`
+- **Production (demo)**: deploy `mcd-demo` branch as a separate Railway service, same root dir `mcd/`, same env vars
+- **Update Kapso webhook** after switching: run command above with the target service URL
 
 ---
 
 ## Project Structure
 
 ```
-mcd/
-├── app.py                         # Flask app, webhook, admin endpoints, /report/generate (TODO)
-├── core.py                        # parse_body(), handle_message()
-├── proactive.py                   # non_responsive flagging (run directly or via cron)
-├── agents/
-│   ├── image_agent.py             # Claude Vision analysis
-│   ├── symptom_agent.py           # Text analysis + next question generation
-│   ├── cro_agent.py               # ← TODO: cohort report generation
-│   └── knowledge/
-│       └── ozempic_knowledge.py   # Shared clinical knowledge base
-├── flows/
-│   └── questionnaire_flow.py      # Orchestrates image + symptom agents
-├── database/
-│   └── supabase.py                # All DB operations
-├── integrations/
-│   └── whatsapp.py                # Kapso API calls (send, download, get_file)
-├── utils/
-│   └── storage.py                 # Media upload to Supabase Storage
-├── config/
-│   ├── envvars.py
-│   └── settings.py
-├── db/
-│   └── schema.sql                 # Reference only — schema already applied + migrated
-├── Procfile
-├── railway.toml
-└── requirements.txt
+platanus-hack-26-ar-team-1/
+├── mcd/                               # WhatsApp bot (Python/Flask)
+│   ├── app.py                         # Flask app, webhook, admin endpoints
+│   ├── core.py                        # parse_body(), handle_message()
+│   ├── proactive.py                   # non_responsive flagging
+│   ├── agents/
+│   │   ├── image_agent.py             # Claude Vision analysis
+│   │   ├── symptom_agent.py           # Text analysis + next question generation
+│   │   ├── cro_agent.py               # ← TODO: cohort report generation
+│   │   └── knowledge/
+│   │       └── ozempic_knowledge.py   # Shared clinical knowledge base
+│   ├── flows/
+│   │   ├── questionnaire_flow.py      # Orchestrates image + symptom agents (main)
+│   │   └── demo_flow.py               # Hardcoded dialog, no agents (mcd-demo branch)
+│   ├── database/
+│   │   └── supabase.py                # All DB operations
+│   ├── integrations/
+│   │   └── whatsapp.py                # Kapso API calls (send, download, get_file)
+│   ├── utils/
+│   │   └── storage.py                 # Media upload to Supabase Storage
+│   ├── config/
+│   │   ├── envvars.py
+│   │   └── settings.py
+│   ├── db/
+│   │   └── schema.sql                 # Reference only — schema already applied
+│   ├── Procfile
+│   ├── railway.toml
+│   └── requirements.txt
+├── mcd-doctor/                        # Doctor dashboard (Next.js on Railway)
+│   └── src/app/
+│       ├── api/patients/              # CRUD patients
+│       ├── api/auth/                  # Doctor login
+│       └── patients/page.tsx          # Patient list UI
+├── mcd-dashboard/                     # Lab reports dashboard (Lovable/React)
+├── project-logo.png                   # 1000x1000 submission logo
+├── project-description.md            # Submission description
+├── platanus-hack-project.json         # Submission metadata
+└── CLAUDE.md                          # This file
 ```
