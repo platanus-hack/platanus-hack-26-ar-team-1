@@ -22,3 +22,6 @@ skills-lock.json
 
 .next/
 node_modules/
+
+# Windows/WSL metadata
+*:Zone.Identifier
