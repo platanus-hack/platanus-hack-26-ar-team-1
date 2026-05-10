@@ -33,7 +33,7 @@ def demo_flow(record, patient):
 
     elif step == 2:
         send_message("Qué bueno saberlo. Recordá que podés escribirme cuando lo necesités.", phone)
-        time.sleep(5)
+        time.sleep(2)
         send_message("⏰ 3 dias después...", phone)
         send_message(f"Hola {name}, soy MCD. ¿Cómo vas con el tratamiento hasta ahora?", phone)
         send_message("Para tu seguimiento de hoy, enviame una foto de tu rostro con buena luz.", phone)
