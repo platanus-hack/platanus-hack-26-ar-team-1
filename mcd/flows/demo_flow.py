@@ -22,7 +22,7 @@ def demo_flow(record, patient):
 
     if step == 0:
         send_message(f"¡Hola {name}! Qué bueno tenerte por acá. Soy MCD parte del equipo de seguimiento del laboratorio.", phone)
-        send_message("Estoy acá para acompañarte durante tu tratamiento con Ozempic.", phone)
+        send_message("Estoy acá para acompañarte durante tu tratamiento con Ozempuc.", phone)
         send_message("Antes de continuar necesito saber si ya iniciaste tu tratamiento.", phone)
         _state[phone] = 1
 
@@ -54,6 +54,6 @@ def demo_flow(record, patient):
 
     elif step == 5:
         send_message(f"¡Hola {name}! Lamento que te sientas así.", phone)
-        send_message("Ese no es un efecto esperado de Ozempic, deberías chequearlo a la brevedad con el Dr. Platanus.", phone)
+        send_message("Detectamos un efecto no esperado de Ozempuc, deberías chequearlo a la brevedad con el Dr. Platanus.", phone)
         # Loop back
         _state[phone] = 0
