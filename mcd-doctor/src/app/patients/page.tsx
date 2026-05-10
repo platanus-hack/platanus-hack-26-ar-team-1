@@ -42,7 +42,7 @@ export default function PatientsPage() {
 
   const fetchPatients = async (doctorId: string) => {
     setLoading(true);
-    const res = await fetch(`/api/patients?doctor_id=${doctorId}`);
+    const res = await fetch('/api/patients');
     const data = await res.json();
     setPatients(data.patients ?? []);
     setLoading(false);
@@ -75,7 +75,7 @@ export default function PatientsPage() {
 
     const url = editing ? `/api/patients/${editing.id}` : '/api/patients';
     const method = editing ? 'PUT' : 'POST';
-    const body = editing ? form : { ...form, doctor_id: doctor!.id };
+    const body = form;
 
     const res = await fetch(url, {
       method,

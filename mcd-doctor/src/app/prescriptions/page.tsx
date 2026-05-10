@@ -52,8 +52,8 @@ export default function PrescriptionsPage() {
   const fetchData = async (doctorId: string) => {
     setLoading(true);
     const [presRes, patRes] = await Promise.all([
-      fetch(`/api/prescriptions?doctor_id=${doctorId}`),
-      fetch(`/api/patients?doctor_id=${doctorId}`),
+      fetch('/api/prescriptions'),
+      fetch('/api/patients'),
     ]);
     const [presData, patData] = await Promise.all([presRes.json(), patRes.json()]);
     setPrescriptions(presData.prescriptions ?? []);

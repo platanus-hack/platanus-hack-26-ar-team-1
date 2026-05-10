@@ -1,6 +1,6 @@
 import os, hmac, hashlib, threading, json
 from flask import Flask, request, jsonify
-from config.envvars import WHATSAPP_WEBHOOK_SECRET
+from config.envvars import ADMIN_API_TOKEN, WHATSAPP_WEBHOOK_SECRET
 from core import parse_body, handle_message
 
 app = Flask(__name__)
@@ -13,7 +13,12 @@ def webhook_verify():
     mode = request.args.get("hub.mode")
     token = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
-    if mode == "subscribe" and token == WHATSAPP_WEBHOOK_SECRET:
+    if (
+        mode == "subscribe"
+        and WHATSAPP_WEBHOOK_SECRET
+        and token
+        and hmac.compare_digest(token, WHATSAPP_WEBHOOK_SECRET)
+    ):
         return challenge, 200
     return "Forbidden", 403
 
@@ -36,18 +41,16 @@ def webhook():
 
 def _process(body):
     try:
-        import json, sys
-        print("RAW BODY:", json.dumps(body, indent=2), flush=True)
-        for message in parse_body(body):
+        messages = parse_body(body)
+        print(f"Webhook received: messages={len(messages)}", flush=True)
+        for message in messages:
             handle_message(message)
-    except Exception as e:
-        import traceback
-        print("Processing error:", e, flush=True)
-        print(traceback.format_exc(), flush=True)
+    except Exception:
+        print("Processing error", flush=True)
 
 
 def _valid_signature(payload: bytes, header: str) -> bool:
-    if not header:
+    if not WHATSAPP_WEBHOOK_SECRET or not header:
         return False
     expected = hmac.new(
         WHATSAPP_WEBHOOK_SECRET.encode(),
@@ -59,9 +62,30 @@ def _valid_signature(payload: bytes, header: str) -> bool:
 
 # ── Admin endpoints (no dashboard yet — use curl for demo) ───────────────────
 
+def _admin_authorized() -> bool:
+    if not ADMIN_API_TOKEN:
+        return False
+    header = request.headers.get("X-Admin-Token", "")
+    bearer = request.headers.get("Authorization", "")
+    token = bearer.removeprefix("Bearer ").strip() if bearer.startswith("Bearer ") else header
+    return hmac.compare_digest(token, ADMIN_API_TOKEN)
+
+
+def _require_admin():
+    if not ADMIN_API_TOKEN:
+        return jsonify({"error": "admin API token is not configured"}), 503
+    if not _admin_authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    return None
+
+
 @app.route("/admin/patient", methods=["POST"])
 def admin_add_patient():
     """Add a patient for a doctor. Body: {name, phone_number, drug_name, doctor_id (optional)}"""
+    auth_error = _require_admin()
+    if auth_error:
+        return auth_error
+
     data = request.get_json(silent=True) or {}
     name = data.get("name", "").strip()
     phone = data.get("phone_number", "").replace("+", "").replace(" ", "")
@@ -79,6 +103,10 @@ def admin_add_patient():
 @app.route("/admin/patients", methods=["GET"])
 def admin_list_patients():
     """List all patients with their status."""
+    auth_error = _require_admin()
+    if auth_error:
+        return auth_error
+
     from database.supabase import _db
     result = _db().table("patients").select("id, name, phone_number, drug_name, status, created_at").order("created_at", desc=True).execute()
     return jsonify(result.data or [])

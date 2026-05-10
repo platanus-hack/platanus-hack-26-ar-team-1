@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
+import { setDoctorSession } from '@/lib/doctor-session';
 
 export async function POST(req: NextRequest) {
   const { email } = await req.json();
@@ -18,5 +19,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Doctor not found. Please register first.' }, { status: 404 });
   }
 
-  return NextResponse.json({ doctor });
+  const response = NextResponse.json({ doctor });
+  try {
+    setDoctorSession(response, doctor.id);
+  } catch {
+    return NextResponse.json({ error: 'doctor session is not configured' }, { status: 503 });
+  }
+  return response;
 }
